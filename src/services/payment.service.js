@@ -1,130 +1,75 @@
 import crypto from "crypto";
 import Payment from "../models/Payment.js";
 import Booking from "../models/Booking.js";
-import sequelize from "../config/db.js";
 import BookingItem from "../models/BookingItem.js";
+import Event from "../models/Event.js";
 import EventSeat from "../models/EventSeat.js";
+import User from "../models/User.js";
+import sequelize from "../config/db.js";
 import { generateEsewaSignature } from "../utils/esewa.js";
+import { getIO } from "../socket.js";
 
-const buildEsewaPaymentPayload= (payment)=> {
+const buildEsewaPaymentPayload = (payment) => {
     const amount = Number(payment.amount).toFixed(2);
 
     const signature = generateEsewaSignature({
-    total_amount: amount,
-    transaction_uuid: payment.transaction_uuid,
-    product_code: process.env.ESEWA_PRODUCT_CODE,
-});
+        total_amount: amount,
+        transaction_uuid: payment.transaction_uuid,
+        product_code: process.env.ESEWA_PRODUCT_CODE,
+    });
 
-return{
-    amount,
-    tax_amount: "0",
-    total_amount: amount,
-    transaction_uuid: payment.transaction_uuid,
-    product_code: process.env.ESEWA_PRODUCT_CODE,
-    product_service_charge: "0",
-    product_delivery_charge: "0",
-    success_url: process.env.ESEWA_SUCCESS_URL,
-    failure_url: process.env.ESEWA_FAILURE_URL,
-    signed_field_names:
-        "total_amount,transaction_uuid,product_code",
-    signature,
+    return {
+        amount,
+        tax_amount: "0",
+        total_amount: amount,
+        transaction_uuid: payment.transaction_uuid,
+        product_code: process.env.ESEWA_PRODUCT_CODE,
+        product_service_charge: "0",
+        product_delivery_charge: "0",
+        success_url: process.env.ESEWA_SUCCESS_URL,
+        failure_url: process.env.ESEWA_FAILURE_URL,
+        signed_field_names:
+            "total_amount,transaction_uuid,product_code",
+        signature,
+    };
 };
+
+const emitSeatUpdate = ({
+    event_id,
+    event_seat_ids,
+    status,
+    hold_expires_at = null,
+}) => {
+    try {
+        getIO()
+            .to(`event:${event_id}`)
+            .emit("seats:updated", {
+                event_id,
+                event_seat_ids,
+                status,
+                hold_expires_at,
+            });
+    } catch (socketError) {
+        console.error(
+            "Socket notification failed:",
+            socketError
+        );
+    }
 };
-
-
 
 export const createPayment = async ({
     user_id,
     booking_id,
     provider,
 }) => {
-    const booking = await Booking.findByPk(booking_id);
-
-    if (!booking) {
-        throw new Error("Booking not found");
-    }
-
-    if (booking.user_id !== user_id) {
-        throw new Error("Access denied");
-    }
-
-    if (booking.status !== "pending") {
-        throw new Error("Booking is not available for payment");
-    }
-
-    if (
-        booking.expires_at &&
-        new Date(booking.expires_at) < new Date()
-    ) {
-        throw new Error("Booking has expired");
-    }
-
-    const existingPayment = await Payment.findOne({
-        where: {
-            booking_id,
-            status: "pending",
-        },
-    });
-
-    if (existingPayment) {
-        return {
-            payment: existingPayment,
-            payment_url: process.env.ESEWA_PAYMENT_URL,
-            payment_payload: buildEsewaPaymentPayload(existingPayment),
-        };
-    }
-
-    const transactionUuid = crypto.randomUUID();
-
-  
-
-    const payment = await Payment.create({
-        booking_id,
-        provider,
-        transaction_uuid: transactionUuid,
-        amount: booking.total_amount,
-        status: "pending",
-    });
-
-    const paymentPayload = buildEsewaPaymentPayload(payment);
-
-    return {
-        payment,
-        payment_url: process.env.ESEWA_PAYMENT_URL,
-        payment_payload: paymentPayload,
-        };
-    };
-
-
-
-
-export const completePayment = async ({ transaction_uuid, reference_id }) => {
     const transaction = await sequelize.transaction();
 
     try {
-        // 1. Find and lock the payment
-        const payment = await Payment.findOne({
-            where: { transaction_uuid },
-            transaction,
-            lock: transaction.LOCK.UPDATE,
-        });
-
-        if (!payment) {
-            throw new Error("Payment not found");
-        }
-
-        // 2. Prevent processing the same successful payment again
-        if (payment.status === "success") {
-            await transaction.commit();
-            return payment;
-        }
-
-        if (payment.status !== "pending") {
-            throw new Error("Payment is not pending");
-        }
-
-        // 3. Find and lock the booking
-        const booking = await Booking.findByPk(payment.booking_id, {
+        const booking = await Booking.findOne({
+            where: {
+                id: booking_id,
+                user_id,
+            },
             transaction,
             lock: transaction.LOCK.UPDATE,
         });
@@ -134,57 +79,192 @@ export const completePayment = async ({ transaction_uuid, reference_id }) => {
         }
 
         if (booking.status !== "pending") {
-            throw new Error("Booking is not pending");
+            throw new Error(
+                "Booking is not available for payment"
+            );
         }
 
-        // 4. Check whether the booking has expired
         if (
             booking.expires_at &&
-            new Date(booking.expires_at) < new Date()
+            new Date(booking.expires_at) <= new Date()
         ) {
             throw new Error("Booking has expired");
         }
 
-        // 5. Get booking items
-        const bookingItems = await BookingItem.findAll({
+        const existingPayment = await Payment.findOne({
             where: {
-                booking_id: booking.id,
+                booking_id,
+                status: "pending",
             },
+            transaction,
+            lock: transaction.LOCK.UPDATE,
+            order: [["created_at", "DESC"]],
+        });
+
+        if (existingPayment) {
+            await transaction.commit();
+
+            return {
+                payment: existingPayment,
+                payment_url:
+                    process.env.ESEWA_PAYMENT_URL,
+                payment_payload:
+                    buildEsewaPaymentPayload(
+                        existingPayment
+                    ),
+            };
+        }
+
+        const transactionUuid = crypto.randomUUID();
+
+        const payment = await Payment.create(
+            {
+                booking_id,
+                provider,
+                transaction_uuid: transactionUuid,
+                amount: booking.total_amount,
+                status: "pending",
+            },
+            {
+                transaction,
+            }
+        );
+
+        await transaction.commit();
+
+        return {
+            payment,
+            payment_url:
+                process.env.ESEWA_PAYMENT_URL,
+            payment_payload:
+                buildEsewaPaymentPayload(payment),
+        };
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
+    }
+};
+
+export const completePayment = async ({
+    transaction_uuid,
+    reference_id,
+}) => {
+    const transaction = await sequelize.transaction();
+
+    try {
+        /*
+         * Lock order:
+         * Booking → Payment → EventSeat
+         */
+
+        // First find the payment without locking it.
+        // We only need the booking_id to establish the lock order.
+        const paymentInfo = await Payment.findOne({
+            where: {
+                transaction_uuid,
+            },
+            attributes: ["id", "booking_id"],
             transaction,
         });
 
-        if (bookingItems.length === 0) {
-            throw new Error("Booking has no items");
+        if (!paymentInfo) {
+            throw new Error("Payment not found");
         }
 
-        // 6. Get the event seat IDs
-        const eventSeatIds = bookingItems.map(
-            (item) => item.event_seat_id
+        // Lock the booking first.
+        const booking = await Booking.findByPk(
+            paymentInfo.booking_id,
+            {
+                transaction,
+                lock: transaction.LOCK.UPDATE,
+            }
         );
 
-        // 7. Find and lock those event seats
-        const eventSeats = await EventSeat.findAll({
+        if (!booking) {
+            throw new Error("Booking not found");
+        }
+
+        // Now lock the payment.
+        const payment = await Payment.findOne({
             where: {
-                id: eventSeatIds,
+                id: paymentInfo.id,
             },
             transaction,
             lock: transaction.LOCK.UPDATE,
         });
 
-        if (eventSeats.length !== eventSeatIds.length) {
-            throw new Error("One or more event seats not found");
+        if (!payment) {
+            throw new Error("Payment not found");
         }
 
-        // 8. Make sure all seats are still held
-        const unavailableSeat = eventSeats.find(
-            (eventSeat) => eventSeat.status !== "held"
-        );
+        // Idempotency:
+        // eSewa may send the callback more than once.
+        if (payment.status === "success") {
+            await transaction.commit();
+            return payment;
+        }
+
+        if (payment.status !== "pending") {
+            throw new Error("Payment is not pending");
+        }
+
+        if (booking.status !== "pending") {
+            throw new Error("Booking is not pending");
+        }
+
+        if (
+            booking.expires_at &&
+            new Date(booking.expires_at) <= new Date()
+        ) {
+            throw new Error("Booking has expired");
+        }
+
+        const bookingItems =
+            await BookingItem.findAll({
+                where: {
+                    booking_id: booking.id,
+                },
+                transaction,
+            });
+
+        if (bookingItems.length === 0) {
+            throw new Error("Booking has no items");
+        }
+
+        const eventSeatIds = bookingItems
+            .map((item) => item.event_seat_id)
+            .sort((a, b) => a - b);
+
+        const eventSeats =
+            await EventSeat.findAll({
+                where: {
+                    id: eventSeatIds,
+                },
+                transaction,
+                lock: transaction.LOCK.UPDATE,
+            });
+
+        if (
+            eventSeats.length !==
+            eventSeatIds.length
+        ) {
+            throw new Error(
+                "One or more event seats not found"
+            );
+        }
+
+        const unavailableSeat =
+            eventSeats.find(
+                (eventSeat) =>
+                    eventSeat.status !== "held"
+            );
 
         if (unavailableSeat) {
-            throw new Error("One or more event seats are not held");
+            throw new Error(
+                "One or more event seats are not held"
+            );
         }
 
-        // 9. Change seats from HELD → BOOKED
         await EventSeat.update(
             {
                 status: "booked",
@@ -198,7 +278,6 @@ export const completePayment = async ({ transaction_uuid, reference_id }) => {
             }
         );
 
-        // 10. Change payment from PENDING → SUCCESS
         await payment.update(
             {
                 status: "success",
@@ -210,7 +289,6 @@ export const completePayment = async ({ transaction_uuid, reference_id }) => {
             }
         );
 
-        // 11. Change booking from PENDING → CONFIRMED
         await booking.update(
             {
                 status: "confirmed",
@@ -221,11 +299,16 @@ export const completePayment = async ({ transaction_uuid, reference_id }) => {
             }
         );
 
-        // 12. Make everything permanent
         await transaction.commit();
 
-        return payment;
+        emitSeatUpdate({
+            event_id: booking.event_id,
+            event_seat_ids: eventSeatIds,
+            status: "booked",
+            hold_expires_at: null,
+        });
 
+        return payment;
     } catch (error) {
         await transaction.rollback();
         throw error;
@@ -236,40 +319,86 @@ export const getEsewaPayment = async ({
     payment_id,
     user_id,
 }) => {
-    const payment = await Payment.findByPk(payment_id);
+    const payment = await Payment.findByPk(
+        payment_id
+    );
 
     if (!payment) {
         throw new Error("Payment not found");
     }
 
-    const booking = await Booking.findByPk(payment.booking_id);
+    if (payment.provider !== "esewa") {
+        throw new Error(
+            "Payment provider is not eSewa"
+        );
+    }
+
+    const booking = await Booking.findOne({
+        where: {
+            id: payment.booking_id,
+            user_id,
+        },
+    });
 
     if (!booking) {
         throw new Error("Booking not found");
     }
 
-    if (booking.user_id !== user_id) {
-        throw new Error("Access denied");
-    }
-
-    if (payment.provider !== "esewa") {
-        throw new Error("Payment provider is not eSewa");
-    }
-
     if (payment.status !== "pending") {
-        throw new Error("Payment is not pending");
+        throw new Error(
+            "Payment is not pending"
+        );
+    }
+
+    if (booking.status !== "pending") {
+        throw new Error(
+            "Booking is not available for payment"
+        );
     }
 
     if (
         booking.expires_at &&
-        new Date(booking.expires_at) < new Date()
+        new Date(booking.expires_at) <= new Date()
     ) {
         throw new Error("Booking has expired");
     }
 
     return {
         payment,
-        payment_url: process.env.ESEWA_PAYMENT_URL,
-        payment_payload: buildEsewaPaymentPayload(payment),
+        payment_url:
+            process.env.ESEWA_PAYMENT_URL,
+        payment_payload:
+            buildEsewaPaymentPayload(payment),
     };
+};
+
+export const getAllPaymentsAdmin = async () => {
+    return Payment.findAll({
+        order: [["created_at", "DESC"]],
+
+        include: [
+            {
+                model: Booking,
+
+                include: [
+                    {
+                        model: User,
+                        attributes: [
+                            "id",
+                            "name",
+                            "email",
+                        ],
+                    },
+
+                    {
+                        model: Event,
+                        attributes: [
+                            "id",
+                            "title",
+                        ],
+                    },
+                ],
+            },
+        ],
+    });
 };
