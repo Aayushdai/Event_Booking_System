@@ -1,0 +1,41 @@
+{
+  "name": "event_booking_system",
+  "version": "1.0.0",
+  "description": "<p align=\"center\">\r   <h1 align=\"center\">Event Booking & Payment System</h1>\r   <p align=\"center\">\r     A backend-focused event booking platform designed to explore authentication,\r     seat reservation, database transactions, real payment processing,\r     notifications, and real-time updates.\r   </p>\r </p>",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aayushdai/Event_Booking_System.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Aayushdai/Event_Booking_System/issues"
+  },
+  "homepage": "https://github.com/Aayushdai/Event_Booking_System#readme",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "mysql2": "^3.24.5",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.0.13",
+    "sequelize": "^6.37.8",
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
