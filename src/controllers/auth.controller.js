@@ -1,4 +1,4 @@
-import {registerUser, loginUser} from "../services/auth.service.js";
+import {registerUser, loginUser, verifyEmail} from "../services/auth.service.js";
 import User from "../models/User.js";
 export const register = async (req,res)=> {
     try{
@@ -14,6 +14,11 @@ export const register = async (req,res)=> {
 
     }catch(error){
             console.error("Error registering user:", error);
+            if(error.code === "EMAIL_SERVICE_UNAVAILABLE"){
+                return res.status(503).json({
+                    message:"Email service unavailable. Please try again later."
+                });
+            }
             res.status(500).json({message:"Internal server error"});
     }
 
@@ -34,9 +39,44 @@ export const login = async (req,res)=> {
                 message:"Invalid email or password"
             })
         }
+        if(error.message === "Please verify your email before logging in"){
+            return res.status(403).json({
+                message:"Please verify your email before logging in"
+            })
+        }
         return res.status(500).json({
             message:"Internal server error"
             })
+    }
+}
+
+export const verify = async (req,res)=> {
+    try{
+        const {email, token}= req.query;
+        if(!email || !token){
+            return res.status(400).json({
+                message: "Email and verification token are required",
+            });
+        }
+        const user = await verifyEmail({ email, token});
+        return res.status(200).json({
+            message: "Email verified successfully",
+        });
+    }catch(error){
+        if(error.message === "invalid verification link"){
+            return res.status(400).json({
+                message: "Invalid verification link",
+            });
+        }
+        if(error.message === "Verification link has expired"){
+            return res.status(400).json({
+                message: "Verification link has expired",
+            });
+        }
+        console.error("Error verifying email:", error);
+        return res.status(500).json({
+            message: "Internal server error",
+        });
     }
 }
 

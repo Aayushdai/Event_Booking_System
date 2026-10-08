@@ -138,7 +138,7 @@ export const createBooking = async ({
         );
 
         const expiresAt = new Date(
-            Date.now() + 10 * 60 * 1000
+            Date.now() + 20 * 1000
         );
 
         const booking = await Booking.create(
@@ -382,6 +382,8 @@ export const cancelBooking = async ({
         throw error;
     }
 };
+
+
 
 export const getAllBookingsAdmin = async () => {
     return Booking.findAll({

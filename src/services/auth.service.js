@@ -29,12 +29,45 @@ export const registerUser = async ({name, email, password})=>{
         email_verification_expires: verificationExpires,
     });
 
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
     const verificationLink =
-    `http://localhost:3000/verify-email?token=${verificationToken}&email=${email}`;
+    `${frontendUrl}/verify-email?token=${verificationToken}&email=${email}`;
 
-    await sendVerificationEmail(email, verificationLink);
+    try{
+        await sendVerificationEmail(email, verificationLink);
+
+    }catch(error){
+        await User.destroy({
+            where: {id: user.id},
+        });
+        throw error;
+    }
 
     return user;
+};
+
+export const verifyEmail = async({email,token})=> {
+    const user = await User.findOne({
+        where: {
+            email,
+            email_verification_token: token,
+        },
+    });
+    if(!user){
+        throw new Error("invalid verification link");
+    }
+    if(
+        !user.email_verification_expires ||
+        new Date(user.email_verification_expires)<= new Date()
+    ){
+        throw new Error("Verification link has expired");
+    }
+    user.email_verified = true;
+    user.email_verification_token = null;
+    user.email_verification_expires = null;
+     await user.save();
+
+     return user;
 }
 
 

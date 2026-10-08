@@ -1,5 +1,6 @@
 import Event from "../models/Event.js";
 import Venue from "../models/Venue.js";
+import EventSeat from "../models/EventSeat.js";
 
 export const createEvent = async ({
     venue_id,

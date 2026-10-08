@@ -378,6 +378,7 @@ export const esewaSuccess = async (req, res) => {
 
 
 export const esewaFailure = (req, res) => {
+    console.log("eSewa payment failed callback received:", req.query);
     return res.redirect(
         `${process.env.FRONTEND_URL}/payment-failed`
     );

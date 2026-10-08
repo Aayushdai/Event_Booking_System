@@ -102,6 +102,7 @@ export const createPayment = async ({
         });
 
         if (existingPayment) {
+            
             await transaction.commit();
 
             return {
