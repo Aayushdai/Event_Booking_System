@@ -1,5 +1,6 @@
 // import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import logger from "../utils/logger.js";
 
 dotenv.config();
 
@@ -34,9 +35,7 @@ dotenv.config();
 // });
 
 export const sendVerificationEmail = async (email, verificationLink) => {
-    console.log("SMTP disabled. Verification email was not sent.");
-    console.log("Verification recipient:", email);
-    console.log("Verification link:", verificationLink);
+    logger.info(" SMTP disabled;");
 
     // try {
     //     await transporter.sendMail({

@@ -1,4 +1,6 @@
+
 import { Server } from "socket.io";
+import logger from "./utils/logger.js";
 
 let io;
 
@@ -10,10 +12,23 @@ export const initializeSocket = (server) => {
     });
 
     io.on("connection", (socket) => {
-        console.log("Socket connected:", socket.id);
+        logger.info(
+            { socketId: socket.id },
+            "Socket connected"
+        );
 
         socket.on("join:event", (eventId) => {
-            socket.join(`event:${eventId}`);
+            const room = `event:${eventId}`;
+
+            socket.join(room);
+
+            logger.info(
+                {
+                    socketId: socket.id,
+                    eventId,
+                },
+                "Socket joined event room"
+            );
         });
 
         socket.on("leave:event", (eventId) => {
@@ -21,15 +36,11 @@ export const initializeSocket = (server) => {
         });
 
         socket.on("disconnect", () => {
-            console.log("Socket disconnected:", socket.id);
+            logger.info(
+                { socketId: socket.id },
+                "Socket disconnected"
+            );
         });
-        socket.on("join:event", (eventId) => {
-    socket.join(`event:${eventId}`);
-
-    console.log(
-        `Socket ${socket.id} joined event:${eventId}`
-    );
-});
     });
 
     return io;
@@ -37,7 +48,9 @@ export const initializeSocket = (server) => {
 
 export const getIO = () => {
     if (!io) {
-        throw new Error("Socket.IO has not been initialized");
+        throw new Error(
+            "Socket.IO has not been initialized"
+        );
     }
 
     return io;

@@ -1,3 +1,4 @@
+
 import {
     createEventSeat,
     getEventSeats,
@@ -33,20 +34,23 @@ export const create = async (req, res, next) => {
             eventSeat,
         });
     } catch (error) {
-        if(
+        if (
             error.message === "Event not found" ||
             error.message === "Seat not found"
-        ){
+        ) {
             error.statusCode = 404;
-        }else if (error.message === "Seat does not belong to event venue"){
+        } else if (
+            error.message === "Seat does not belong to event venue"
+        ) {
             error.statusCode = 400;
-        }else if(
+        } else if (
             error.message === "Seat already added to this event"
-        ){
+        ) {
             error.statusCode = 409;
-        }else {
+        } else {
             error.statusCode = 500;
         }
+
         return next(error);
     }
 };
@@ -68,17 +72,10 @@ export const getByEvent = async (req, res, next) => {
             eventSeats,
         });
     } catch (error) {
-        if (error.message === "Event not found") {
-            return res.status(404).json({
-                message: "Event not found",
-            });
-        }
+        error.statusCode =
+            error.message === "Event not found" ? 404 : 500;
 
-        console.error("Error retrieving event seats:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
@@ -95,9 +92,10 @@ export const getById = async (req, res, next) => {
         const eventSeat = await getEventSeatById(id);
 
         if (!eventSeat) {
-            return res.status(404).json({
-                message: "Event seat not found",
-            });
+            const error = new Error("Event seat not found");
+            error.statusCode = 404;
+
+            return next(error);
         }
 
         return res.status(200).json({
@@ -137,7 +135,7 @@ export const update = async (req, res, next) => {
         });
     } catch (error) {
         error.statusCode =
-        error.message === "Event seat not found" ? 404 : 500;
+            error.message === "Event seat not found" ? 404 : 500;
 
         return next(error);
     }
@@ -151,17 +149,16 @@ export const remove = async (req, res, next) => {
             message: "Event seat deleted successfully",
         });
     } catch (error) {
-        if(error.message === "Event seat not found") {
+        if (error.message === "Event seat not found") {
             error.statusCode = 404;
-        }
-        else if(
+        } else if (
             error.message === "Booked seat cannot be deleted"
         ) {
             error.statusCode = 400;
-        }
-        else{
+        } else {
             error.statusCode = 500;
         }
+
         return next(error);
     }
 };

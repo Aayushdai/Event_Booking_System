@@ -6,6 +6,7 @@ import Payment from "../models/Payment.js";
 import Booking from "../models/Booking.js";
 import { checkEsewaTransactionStatus } from "../services/esewa.service.js";
 import { completePayment } from "../services/payment.service.js";
+import logger from "../utils/logger.js";
 
 const enabled =
     process.env.ESEWA_RECONCILIATION_ENABLED === "true";
@@ -34,18 +35,22 @@ export const reconcilePendingEsewaPayments = async () => {
         });
 
         for (const payment of payments) {
-            if ((retryAfter.get(payment.id) || 0) > Date.now()) {
+            if (
+                (retryAfter.get(payment.id) || 0) > Date.now()
+            ) {
                 continue;
             }
 
-            retryAfter.set(payment.id, Date.now() + 30000);
+            retryAfter.set(
+                payment.id,
+                Date.now() + 30000
+            );
 
             try {
                 const booking = await Booking.findByPk(
                     payment.booking_id
                 );
 
-                // Never confirm an expired or cancelled booking.
                 if (
                     !booking ||
                     booking.status !== "pending" ||
@@ -57,25 +62,29 @@ export const reconcilePendingEsewaPayments = async () => {
                     continue;
                 }
 
-                const result = await checkEsewaTransactionStatus({
-                    transaction_uuid: payment.transaction_uuid,
-                    total_amount: payment.amount,
-                });
+                const result =
+                    await checkEsewaTransactionStatus({
+                        transaction_uuid: payment.transaction_uuid,
+                        total_amount: payment.amount,
+                    });
 
-                // Do not change anything for uncertain or unsuccessful states.
                 if (result.status !== "COMPLETE") {
                     continue;
                 }
 
                 const matches =
-                    result.transactionUuid === payment.transaction_uuid &&
-                    result.productCode === process.env.ESEWA_PRODUCT_CODE &&
-                    Number(result.totalAmount) === Number(payment.amount) &&
+                    result.transactionUuid ===
+                        payment.transaction_uuid &&
+                    result.productCode ===
+                        process.env.ESEWA_PRODUCT_CODE &&
+                    Number(result.totalAmount) ===
+                        Number(payment.amount) &&
                     Boolean(result.referenceId);
 
                 if (!matches) {
-                    console.error(
-                        `Reconciliation mismatch for payment ${payment.id}`
+                    logger.error(
+                        { paymentId: payment.id },
+                        "eSewa reconciliation mismatch"
                     );
                     continue;
                 }
@@ -87,13 +96,17 @@ export const reconcilePendingEsewaPayments = async () => {
 
                 retryAfter.delete(payment.id);
 
-                console.log(
-                    `Reconciled eSewa payment ${payment.id}`
+                logger.info(
+                    { paymentId: payment.id },
+                    "eSewa payment reconciled successfully"
                 );
             } catch (error) {
-                console.error(
-                    `Could not reconcile payment ${payment.id}:`,
-                    error.message
+                logger.error(
+                    {
+                        err: error,
+                        paymentId: payment.id,
+                    },
+                    "Failed to reconcile eSewa payment"
                 );
             }
         }
@@ -103,10 +116,12 @@ export const reconcilePendingEsewaPayments = async () => {
 };
 
 if (enabled) {
-    // Check pending payments once per minute.
     cron.schedule("* * * * *", () => {
         reconcilePendingEsewaPayments().catch((error) => {
-            console.error("Payment reconciliation job failed:", error);
+            logger.error(
+                { err: error },
+                "Payment reconciliation job failed"
+            );
         });
     });
 }

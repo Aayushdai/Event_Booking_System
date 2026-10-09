@@ -14,8 +14,8 @@ import {
 } from "../services/esewa.service.js";
 
 import Payment from "../models/Payment.js";
+import logger from "../utils/logger.js";
 
-// Forward errors to the centralized error middleware.
 const forwardError = (error, next, statusMap = {}) => {
     error.statusCode = statusMap[error.message] ?? 500;
     return next(error);
@@ -135,10 +135,11 @@ export const esewaSuccess = async (req, res, next) => {
             });
         }
 
-        const generatedSignature = generateEsewaResponseSignature({
-            signed_field_names,
-            data: esewaResponse,
-        });
+        const generatedSignature =
+            generateEsewaResponseSignature({
+                signed_field_names,
+                data: esewaResponse,
+            });
 
         if (generatedSignature !== signature) {
             return res.status(400).json({
@@ -192,10 +193,11 @@ export const esewaSuccess = async (req, res, next) => {
             });
         }
 
-        const statusResponse = await checkEsewaTransactionStatus({
-            transaction_uuid,
-            total_amount: paymentRecord.amount,
-        });
+        const statusResponse =
+            await checkEsewaTransactionStatus({
+                transaction_uuid,
+                total_amount: paymentRecord.amount,
+            });
 
         if (statusResponse.status !== "COMPLETE") {
             return res.status(400).json({
@@ -253,7 +255,13 @@ export const esewaSuccess = async (req, res, next) => {
 };
 
 export const esewaFailure = (req, res) => {
-    console.log("eSewa payment failed callback received:", req.query);
+    logger.info(
+        {
+            method: req.method,
+            path: req.path,
+        },
+        "eSewa payment failure callback received"
+    );
 
     return res.redirect(
         `${process.env.FRONTEND_URL}/payment-failed`
@@ -317,6 +325,7 @@ export const esewaForm = async (req, res, next) => {
             "Payment provider is not eSewa": 400,
             "Payment is not pending": 400,
             "Booking has expired": 400,
+            "Booking is not available for payment": 400,
         });
     }
 };
