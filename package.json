@@ -4,6 +4,7 @@
   "description": "<p align=\"center\">\r   <h1 align=\"center\">Event Booking & Payment System</h1>\r   <p align=\"center\">\r     A backend-focused event booking platform designed to explore authentication,\r     seat reservation, database transactions, real payment processing,\r     notifications, and real-time updates.\r   </p>\r </p>",
   "main": "index.js",
   "scripts": {
+    "test": "node --test  --import ./setup.js",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js"
   },
@@ -21,6 +22,7 @@
   "homepage": "https://github.com/Aayushdai/Event_Booking_System#readme",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^18.0.5",
     "express": "^5.2.1",
@@ -31,11 +33,15 @@
     "mysql2": "^3.24.5",
     "node-cron": "^4.6.0",
     "nodemailer": "^10.0.13",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "redis": "^6.3.0",
     "sequelize": "^6.37.8",
     "socket.io": "^4.8.4",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.1"
   }
 }

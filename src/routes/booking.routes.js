@@ -6,11 +6,13 @@ import {
     cancel,
 } from "../controllers/booking.controller.js";
 import { authenticate } from "../middleware/auth.middleware.js";
+import { bookingLimiter } from "../middleware/ratelimit.middleware.js";
 
 const router = express.Router();
 
 router.post(
     "/",
+    bookingLimiter,
     authenticate,
     create
 );
@@ -29,6 +31,7 @@ router.get(
 
 router.post(
     "/:id/cancel",
+    bookingLimiter,
     authenticate,
     cancel
 );

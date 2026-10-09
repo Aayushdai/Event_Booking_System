@@ -6,7 +6,7 @@ import {
     deleteEvent,
 } from "../services/event.service.js";
 
-export const create = async (req, res) => {
+export const create = async (req, res, next) => {
     try {
         const {
             venue_id,
@@ -43,17 +43,9 @@ export const create = async (req, res) => {
             event,
         });
     } catch (error) {
-        if (error.message === "Venue not found") {
-            return res.status(404).json({
-                message: "Venue not found",
-            });
-        }
-
-        console.error("Error creating event:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode =
+        error.message === "Venue not found" ? 404 : 500;
+        return next(error);
     }
 };
 
@@ -66,11 +58,8 @@ export const getAll = async (req, res) => {
             events,
         });
     } catch (error) {
-        console.error("Error retrieving events:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
 };
 
@@ -97,11 +86,8 @@ export const getById = async (req, res) => {
             event,
         });
     } catch (error) {
-        console.error("Error retrieving event:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
 };
 
@@ -142,27 +128,20 @@ export const update = async (req, res) => {
             event,
         });
     } catch (error) {
-        if (error.message === "Event not found") {
-            return res.status(404).json({
-                message: "Event not found",
-            });
+        if(
+            error.message === "Event not found" ||
+            error.message === "Venue not found"
+        ){
+            error.statusCode = 404;
         }
-
-        if (error.message === "Venue not found") {
-            return res.status(404).json({
-                message: "Venue not found",
-            });
+        else {
+            error.statusCode = 500;
         }
-
-        console.error("Error updating event:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
-export const remove = async (req, res) => {
+export const remove = async (req, res, next) => {
     try {
         await deleteEvent(req.params.id);
 
@@ -170,16 +149,8 @@ export const remove = async (req, res) => {
             message: "Event deleted successfully",
         });
     } catch (error) {
-        if (error.message === "Event not found") {
-            return res.status(404).json({
-                message: "Event not found",
-            });
-        }
-
-        console.error("Error deleting event:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode =
+        error.message === "Event not found" ? 404 : 500;
+        return next(error);
     }
 };

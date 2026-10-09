@@ -1,3 +1,6 @@
+
+import crypto from "crypto";
+
 import sequelize from "../config/db.js";
 import Booking from "../models/Booking.js";
 import BookingItem from "../models/BookingItem.js";
@@ -8,6 +11,7 @@ import User from "../models/User.js";
 import Venue from "../models/Venue.js";
 import Seat from "../models/Seat.js";
 import { getIO } from "../socket.js";
+import logger from "../utils/logger.js";
 
 const emitSeatUpdate = ({
     event_id,
@@ -25,17 +29,70 @@ const emitSeatUpdate = ({
                 hold_expires_at,
             });
     } catch (socketError) {
-        console.error(
-            "Socket notification failed:",
-            socketError
+        logger.error(
+            {
+                err: socketError,
+                eventId: event_id,
+                eventSeatIds: event_seat_ids,
+            },
+            "Socket notification failed"
         );
     }
+};
+
+const createBookingRequestHash = ({
+    event_id,
+    event_seat_ids,
+}) => {
+    const normalizedRequest = {
+        event_id: String(event_id),
+        event_seat_ids: [...event_seat_ids].sort(
+            (a, b) => a - b
+        ),
+    };
+
+    return crypto
+        .createHash("sha256")
+        .update(JSON.stringify(normalizedRequest))
+        .digest("hex");
+};
+
+const getExistingIdempotentBooking = async ({
+    user_id,
+    idempotency_key,
+    requestHash,
+}) => {
+    const existingBooking = await Booking.findOne({
+        where: {
+            user_id,
+            idempotency_key,
+        },
+    });
+
+    if (!existingBooking) {
+        return null;
+    }
+
+    if (
+        existingBooking.idempotency_request_hash !==
+        requestHash
+    ) {
+        const error = new Error(
+            "Idempotency key already used for a different request"
+        );
+
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return existingBooking;
 };
 
 export const createBooking = async ({
     user_id,
     event_id,
     event_seat_ids,
+    idempotency_key,
 }) => {
     if (
         !Array.isArray(event_seat_ids) ||
@@ -44,6 +101,28 @@ export const createBooking = async ({
         throw new Error(
             "At least one seat must be selected"
         );
+    }
+
+    let normalizedIdempotencyKey = null;
+
+    if (
+        idempotency_key !== undefined &&
+        idempotency_key !== null
+    ) {
+        if (
+            typeof idempotency_key !== "string" ||
+            idempotency_key.trim().length === 0 ||
+            idempotency_key.trim().length > 128
+        ) {
+            const error = new Error(
+                "Idempotency key must be between 1 and 128 characters"
+            );
+
+            error.statusCode = 400;
+            throw error;
+        }
+
+        normalizedIdempotencyKey = idempotency_key.trim();
     }
 
     const seatIds = [...event_seat_ids]
@@ -62,6 +141,26 @@ export const createBooking = async ({
     }
 
     uniqueSeatIds.sort((a, b) => a - b);
+
+    const requestHash = normalizedIdempotencyKey
+        ? createBookingRequestHash({
+              event_id,
+              event_seat_ids: uniqueSeatIds,
+          })
+        : null;
+
+    if (normalizedIdempotencyKey) {
+        const existingBooking =
+            await getExistingIdempotentBooking({
+                user_id,
+                idempotency_key: normalizedIdempotencyKey,
+                requestHash,
+            });
+
+        if (existingBooking) {
+            return existingBooking;
+        }
+    }
 
     const transaction = await sequelize.transaction();
 
@@ -89,10 +188,7 @@ export const createBooking = async ({
             lock: transaction.LOCK.UPDATE,
         });
 
-        if (
-            eventSeats.length !==
-            uniqueSeatIds.length
-        ) {
+        if (eventSeats.length !== uniqueSeatIds.length) {
             throw new Error(
                 "One or more event seats are invalid"
             );
@@ -104,18 +200,14 @@ export const createBooking = async ({
             if (
                 eventSeat.status === "held" &&
                 eventSeat.hold_expires_at &&
-                new Date(
-                    eventSeat.hold_expires_at
-                ) <= now
+                new Date(eventSeat.hold_expires_at) <= now
             ) {
                 await eventSeat.update(
                     {
                         status: "available",
                         hold_expires_at: null,
                     },
-                    {
-                        transaction,
-                    }
+                    { transaction }
                 );
             }
         }
@@ -138,7 +230,7 @@ export const createBooking = async ({
         );
 
         const expiresAt = new Date(
-            Date.now() + 20 * 1000
+            Date.now() + 10 * 60 * 1000
         );
 
         const booking = await Booking.create(
@@ -148,10 +240,10 @@ export const createBooking = async ({
                 total_amount: totalAmount,
                 status: "pending",
                 expires_at: expiresAt,
+                idempotency_key: normalizedIdempotencyKey,
+                idempotency_request_hash: requestHash,
             },
-            {
-                transaction,
-            }
+            { transaction }
         );
 
         const bookingItems = eventSeats.map(
@@ -162,12 +254,9 @@ export const createBooking = async ({
             })
         );
 
-        await BookingItem.bulkCreate(
-            bookingItems,
-            {
-                transaction,
-            }
-        );
+        await BookingItem.bulkCreate(bookingItems, {
+            transaction,
+        });
 
         await EventSeat.update(
             {
@@ -193,18 +282,36 @@ export const createBooking = async ({
 
         return booking;
     } catch (error) {
-        await transaction.rollback();
+        if (!transaction.finished) {
+            await transaction.rollback();
+        }
+
+        if (normalizedIdempotencyKey) {
+            try {
+                const existingBooking =
+                    await getExistingIdempotentBooking({
+                        user_id,
+                        idempotency_key: normalizedIdempotencyKey,
+                        requestHash,
+                    });
+
+                if (existingBooking) {
+                    return existingBooking;
+                }
+            } catch (lookupError) {
+                if (lookupError.statusCode === 409) {
+                    throw lookupError;
+                }
+            }
+        }
+
         throw error;
     }
 };
 
-export const getMyBookings = async ({
-    user_id,
-}) => {
+export const getMyBookings = async ({ user_id }) => {
     return Booking.findAll({
-        where: {
-            user_id,
-        },
+        where: { user_id },
         order: [["created_at", "DESC"]],
     });
 };
@@ -224,10 +331,7 @@ export const getMyBookingById = async ({
                 include: [
                     {
                         model: Venue,
-                        attributes: [
-                            "id",
-                            "name",
-                        ],
+                        attributes: ["id", "name"],
                     },
                 ],
             },
@@ -263,11 +367,7 @@ export const cancelBooking = async ({
     const transaction = await sequelize.transaction();
 
     try {
-        /*
-         * Lock order:
-         * Booking → Payment → EventSeat
-         */
-
+        // Lock order: Booking → Payment → EventSeat
         const booking = await Booking.findOne({
             where: {
                 id: booking_id,
@@ -343,17 +443,10 @@ export const cancelBooking = async ({
             }
         );
 
-        if (
-            payment &&
-            payment.status === "pending"
-        ) {
+        if (payment && payment.status === "pending") {
             await payment.update(
-                {
-                    status: "failed",
-                },
-                {
-                    transaction,
-                }
+                { status: "failed" },
+                { transaction }
             );
         }
 
@@ -362,9 +455,7 @@ export const cancelBooking = async ({
                 status: "cancelled",
                 expires_at: null,
             },
-            {
-                transaction,
-            }
+            { transaction }
         );
 
         await transaction.commit();
@@ -378,12 +469,13 @@ export const cancelBooking = async ({
 
         return booking;
     } catch (error) {
-        await transaction.rollback();
+        if (!transaction.finished) {
+            await transaction.rollback();
+        }
+
         throw error;
     }
 };
-
-
 
 export const getAllBookingsAdmin = async () => {
     return Booking.findAll({
@@ -391,12 +483,7 @@ export const getAllBookingsAdmin = async () => {
         include: [
             {
                 model: User,
-                attributes: [
-                    "id",
-                    "name",
-                    "email",
-                    "role",
-                ],
+                attributes: ["id", "name", "email", "role"],
             },
             {
                 model: Event,
@@ -412,10 +499,7 @@ export const getAllBookingsAdmin = async () => {
                 include: [
                     {
                         model: Venue,
-                        attributes: [
-                            "id",
-                            "name",
-                        ],
+                        attributes: ["id", "name"],
                     },
                 ],
             },
@@ -459,12 +543,7 @@ export const getAdminBookingById = async ({
         include: [
             {
                 model: User,
-                attributes: [
-                    "id",
-                    "name",
-                    "email",
-                    "role",
-                ],
+                attributes: ["id", "name", "email", "role"],
             },
             {
                 model: Event,

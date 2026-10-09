@@ -6,7 +6,7 @@ import {
     deleteEventSeat,
 } from "../services/eventSeat.service.js";
 
-export const create = async (req, res) => {
+export const create = async (req, res, next) => {
     try {
         const { event_id, seat_id, price } = req.body;
 
@@ -33,39 +33,25 @@ export const create = async (req, res) => {
             eventSeat,
         });
     } catch (error) {
-        if (error.message === "Event not found") {
-            return res.status(404).json({
-                message: "Event not found",
-            });
+        if(
+            error.message === "Event not found" ||
+            error.message === "Seat not found"
+        ){
+            error.statusCode = 404;
+        }else if (error.message === "Seat does not belong to event venue"){
+            error.statusCode = 400;
+        }else if(
+            error.message === "Seat already added to this event"
+        ){
+            error.statusCode = 409;
+        }else {
+            error.statusCode = 500;
         }
-
-        if (error.message === "Seat not found") {
-            return res.status(404).json({
-                message: "Seat not found",
-            });
-        }
-
-        if (error.message === "Seat does not belong to event venue") {
-            return res.status(400).json({
-                message: "Seat does not belong to event venue",
-            });
-        }
-
-        if (error.message === "Seat already added to this event") {
-            return res.status(409).json({
-                message: "Seat already added to this event",
-            });
-        }
-
-        console.error("Error creating event seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
-export const getByEvent = async (req, res) => {
+export const getByEvent = async (req, res, next) => {
     try {
         const { event_id } = req.params;
 
@@ -96,7 +82,7 @@ export const getByEvent = async (req, res) => {
     }
 };
 
-export const getById = async (req, res) => {
+export const getById = async (req, res, next) => {
     try {
         const { id } = req.params;
 
@@ -119,15 +105,12 @@ export const getById = async (req, res) => {
             eventSeat,
         });
     } catch (error) {
-        console.error("Error retrieving event seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
 };
 
-export const update = async (req, res) => {
+export const update = async (req, res, next) => {
     try {
         const { price, status } = req.body;
 
@@ -153,21 +136,14 @@ export const update = async (req, res) => {
             eventSeat,
         });
     } catch (error) {
-        if (error.message === "Event seat not found") {
-            return res.status(404).json({
-                message: "Event seat not found",
-            });
-        }
+        error.statusCode =
+        error.message === "Event seat not found" ? 404 : 500;
 
-        console.error("Error updating event seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
-export const remove = async (req, res) => {
+export const remove = async (req, res, next) => {
     try {
         await deleteEventSeat(req.params.id);
 
@@ -175,22 +151,17 @@ export const remove = async (req, res) => {
             message: "Event seat deleted successfully",
         });
     } catch (error) {
-        if (error.message === "Event seat not found") {
-            return res.status(404).json({
-                message: "Event seat not found",
-            });
+        if(error.message === "Event seat not found") {
+            error.statusCode = 404;
         }
-
-        if (error.message === "Booked seat cannot be deleted") {
-            return res.status(400).json({
-                message: "Booked seat cannot be deleted",
-            });
+        else if(
+            error.message === "Booked seat cannot be deleted"
+        ) {
+            error.statusCode = 400;
         }
-
-        console.error("Error deleting event seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        else{
+            error.statusCode = 500;
+        }
+        return next(error);
     }
 };

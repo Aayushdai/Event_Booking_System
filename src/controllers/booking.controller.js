@@ -1,15 +1,23 @@
+
 import {
     createBooking,
     getMyBookings,
     getMyBookingById,
     cancelBooking,
-} from "../services/booking.service.js";export const create = async (req, res) => {
+} from "../services/booking.service.js";
+
+export const create = async (req, res, next) => {
     try {
         const { event_id, event_seat_ids } = req.body;
 
-        if (!event_id || !Array.isArray(event_seat_ids) || event_seat_ids.length === 0) {
+        if (
+            !event_id ||
+            !Array.isArray(event_seat_ids) ||
+            event_seat_ids.length === 0
+        ) {
             return res.status(400).json({
-                message: "Event ID and at least one event seat ID are required",
+                message:
+                    "Event ID and at least one event seat ID are required",
             });
         }
 
@@ -17,6 +25,7 @@ import {
             user_id: req.user.id,
             event_id,
             event_seat_ids,
+            idempotency_key: req.get("Idempotency-Key"),
         });
 
         return res.status(201).json({
@@ -25,40 +34,33 @@ import {
         });
     } catch (error) {
         if (error.message === "Event not found") {
-            return res.status(404).json({
-                message: "Event not found",
-            });
+            error.statusCode = 404;
+        } else if (
+            error.message === "Event is not available for booking" ||
+            error.message === "One or more event seats are invalid"
+        ) {
+            error.statusCode = 400;
+        } else if (
+            error.message ===
+                "One or more selected seats are unavailable" ||
+            error.message ===
+                "Idempotency key already used for a different request"
+        ) {
+            error.statusCode = 409;
+        } else if (
+            error.message ===
+            "Idempotency key must be between 1 and 128 characters"
+        ) {
+            error.statusCode = 400;
+        } else if (!error.statusCode) {
+            error.statusCode = 500;
         }
 
-        if (error.message === "Event is not available for booking") {
-            return res.status(400).json({
-                message: "Event is not available for booking",
-            });
-        }
-
-        if (error.message === "One or more event seats are invalid") {
-            return res.status(400).json({
-                message: "One or more event seats are invalid",
-            });
-        }
-
-        if (error.message === "One or more selected seats are unavailable") {
-            return res.status(409).json({
-                message: "One or more selected seats are unavailable",
-            });
-        }
-
-        console.error("Error creating booking:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
-
-
 };
 
-export const getMine = async (req, res) => {
+export const getMine = async (req, res, next) => {
     try {
         const bookings = await getMyBookings({
             user_id: req.user.id,
@@ -68,18 +70,11 @@ export const getMine = async (req, res) => {
             bookings,
         });
     } catch (error) {
-        console.error(
-            "Error fetching user bookings:",
-            error
-        );
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
-export const getById = async (req, res) => {
+export const getById = async (req, res, next) => {
     try {
         const booking = await getMyBookingById({
             user_id: req.user.id,
@@ -87,25 +82,19 @@ export const getById = async (req, res) => {
         });
 
         if (!booking) {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
+            const error = new Error("Booking not found");
+            error.statusCode = 404;
+
+            return next(error);
         }
 
         return res.status(200).json(booking);
     } catch (error) {
-        console.error(
-            "Error fetching booking:",
-            error
-        );
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
-export const cancel = async (req, res) => {
+export const cancel = async (req, res, next) => {
     try {
         const booking = await cancelBooking({
             user_id: req.user.id,
@@ -118,44 +107,17 @@ export const cancel = async (req, res) => {
         });
     } catch (error) {
         if (error.message === "Booking not found") {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
-        }
-
-        if (
-            error.message ===
-            "Only pending bookings can be cancelled"
+            error.statusCode = 404;
+        } else if (
+            error.message === "Only pending bookings can be cancelled" ||
+            error.message === "Booking has no items" ||
+            error.message === "One or more event seats not found"
         ) {
-            return res.status(400).json({
-                message:
-                    "Only pending bookings can be cancelled",
-            });
+            error.statusCode = 400;
+        } else if (!error.statusCode) {
+            error.statusCode = 500;
         }
 
-        if (error.message === "Booking has no items") {
-            return res.status(400).json({
-                message: "Booking has no items",
-            });
-        }
-
-        if (
-            error.message ===
-            "One or more event seats not found"
-        ) {
-            return res.status(400).json({
-                message:
-                    "One or more event seats not found",
-            });
-        }
-
-        console.error(
-            "Error cancelling booking:",
-            error
-        );
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };

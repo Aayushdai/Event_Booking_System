@@ -1,93 +1,215 @@
-import {registerUser, loginUser, verifyEmail} from "../services/auth.service.js";
+import {
+    registerUser,
+    loginUser,
+    verifyEmail,
+    refreshAccessToken,
+    logoutUser,
+} from "../services/auth.service.js";
+
 import User from "../models/User.js";
-export const register = async (req,res)=> {
-    try{
-        const {name, email, password} = req.body;
-        if(!name || !email || !password){
-            return res.status(400).json({message:"Name, email and password are required"});
-        }
 
-        const user = await registerUser({name, email, password});
-        res.status(201).json({message:"User registered successfully", user});
+import {
+    registerSchema,
+    loginSchema,
+} from "../validators/auth.validator.js";
 
+const REFRESH_TOKEN_COOKIE = "refreshToken";
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+const refreshCookieOptions = () => ({
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/api/auth",
+    maxAge: REFRESH_TOKEN_TTL_MS,
+});
 
-    }catch(error){
-            console.error("Error registering user:", error);
-            if(error.code === "EMAIL_SERVICE_UNAVAILABLE"){
-                return res.status(503).json({
-                    message:"Email service unavailable. Please try again later."
-                });
-            }
-            res.status(500).json({message:"Internal server error"});
+const clearRefreshCookieOptions = () => {
+    const { maxAge, ...options } = refreshCookieOptions();
+    return options;
+};
+
+export const register = async (req, res, next) => {
+    const validation = registerSchema.safeParse(req.body);
+
+    if (!validation.success) {
+        return res.status(400).json({
+            message: "Validation failed",
+            errors: validation.error.issues,
+        });
     }
 
-}
-export const login = async (req,res)=> {
-    try{
-        const {email, password} = req.body;
-        if(!email || !password){
-            return res.status(400).json({message:"Email and password are required"});
+    try {
+        const user = await registerUser(validation.data);
+
+        return res.status(201).json({
+            message: "User registered successfully",
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                email_verified: user.email_verified,
+            },
+        });
+    } catch (error) {
+        if (error.message === "User with this email already exists") {
+            error.statusCode = 409;
+        } else if (error.code === "EMAIL_SERVICE_UNAVAILABLE") {
+            error.statusCode = 503;
+            error.message =
+                "Email service unavailable. Please try again later.";
+        } else {
+            error.statusCode = 500;
         }
 
-        const {user, accessToken} = await loginUser({email, password});
-        res.status(200).json({message:"Login successful",id:user.id, name: user.name, email:user.email, role: user.role, email_verified: user.email_verified, accessToken});
-    }catch(error){
-        console.error("Error logging in user:", error);
-        if(error.message === "Invalid email or password"){
-            return res.status(401).json({
-                message:"Invalid email or password"
-            })
-        }
-        if(error.message === "Please verify your email before logging in"){
-            return res.status(403).json({
-                message:"Please verify your email before logging in"
-            })
-        }
-        return res.status(500).json({
-            message:"Internal server error"
-            })
+        return next(error);
     }
-}
+};
 
-export const verify = async (req,res)=> {
-    try{
-        const {email, token}= req.query;
-        if(!email || !token){
-            return res.status(400).json({
-                message: "Email and verification token are required",
-            });
+export const login = async (req, res, next) => {
+    const validation = loginSchema.safeParse(req.body);
+
+    if (!validation.success) {
+        return res.status(400).json({
+            message: "Validation failed",
+            errors: validation.error.issues,
+        });
+    }
+
+    try {
+        const { user, accessToken, refreshToken } =
+            await loginUser(validation.data);
+
+        res.cookie(
+            REFRESH_TOKEN_COOKIE,
+            refreshToken,
+            refreshCookieOptions()
+        );
+
+        return res.status(200).json({
+            message: "Login successful",
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            email_verified: user.email_verified,
+            accessToken,
+        });
+    } catch (error) {
+        if (error.message === "Invalid email or password") {
+            error.statusCode = 401;
+        } else if (
+            error.message === "Please verify your email before logging in"
+        ) {
+            error.statusCode = 403;
+        } else {
+            error.statusCode = 500;
         }
-        const user = await verifyEmail({ email, token});
+
+        return next(error);
+    }
+};
+
+export const refresh = async (req, res, next) => {
+    const refreshToken = req.cookies?.[REFRESH_TOKEN_COOKIE];
+
+    if (!refreshToken) {
+        const error = new Error("Refresh token missing");
+        error.statusCode = 401;
+        return next(error);
+    }
+
+    try {
+        const {
+            accessToken,
+            refreshToken: newRefreshToken,
+        } = await refreshAccessToken({ refreshToken });
+
+        res.cookie(
+            REFRESH_TOKEN_COOKIE,
+            newRefreshToken,
+            refreshCookieOptions()
+        );
+
+        return res.status(200).json({
+            message: "Access token refreshed successfully",
+            accessToken,
+        });
+    } catch (error) {
+        if (
+            error.message === "Invalid or expired refresh token" ||
+            error.message === "Refresh token missing"
+        ) {
+            error.statusCode = 401;
+            error.message = "Invalid or expired refresh token";
+        } else {
+            error.statusCode = 500;
+        }
+
+        return next(error);
+    }
+};
+
+export const logout = async (req, res, next) => {
+    try {
+        await logoutUser({
+            refreshToken: req.cookies?.[REFRESH_TOKEN_COOKIE],
+        });
+
+        res.clearCookie(
+            REFRESH_TOKEN_COOKIE,
+            clearRefreshCookieOptions()
+        );
+
+        return res.status(200).json({
+            message: "Logged out successfully",
+        });
+    } catch (error) {
+        error.statusCode = 500;
+        return next(error);
+    }
+};
+
+export const verify = async (req, res, next) => {
+    const { email, token } = req.query;
+
+    if (!email || !token) {
+        return res.status(400).json({
+            message: "Email and verification token are required",
+        });
+    }
+
+    try {
+        await verifyEmail({ email, token });
+
         return res.status(200).json({
             message: "Email verified successfully",
         });
-    }catch(error){
-        if(error.message === "invalid verification link"){
-            return res.status(400).json({
-                message: "Invalid verification link",
-            });
+    } catch (error) {
+        if (error.message === "invalid verification link") {
+            error.statusCode = 400;
+            error.message = "Invalid verification link";
+        } else if (error.message === "Verification link has expired") {
+            error.statusCode = 400;
+        } else {
+            error.statusCode = 500;
         }
-        if(error.message === "Verification link has expired"){
-            return res.status(400).json({
-                message: "Verification link has expired",
-            });
-        }
-        console.error("Error verifying email:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
-    }
-}
 
-export const getMe= async (req,res)=>{
-    try{
+        return next(error);
+    }
+};
+
+export const getMe = async (req, res, next) => {
+    try {
         const user = await User.findByPk(req.user.id);
-        if(!user){
-            return res.status(404).json({
-                message: "User not found"
-            });
+
+        if (!user) {
+            const error = new Error("User not found");
+            error.statusCode = 404;
+            return next(error);
         }
+
         return res.status(200).json({
             message: "User retrieved successfully",
             user: {
@@ -95,13 +217,11 @@ export const getMe= async (req,res)=>{
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                email_verified: user.email_verified
-            }
+                email_verified: user.email_verified,
+            },
         });
-    }catch(error){
-        console.error("Error retrieving user:", error);
-        return res.status(500).json({
-            message: "Internal server error"
-        });
+    } catch (error) {
+        error.statusCode = 500;
+        return next(error);
     }
-}
+};

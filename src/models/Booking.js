@@ -57,6 +57,12 @@ const Booking = sequelize.define(
         timestamps: true,
         createdAt: "created_at",
         updatedAt: "updated_at",
+        indexs: [{
+            name: "unique_booking_user_idempotency_key",
+            unique: true,
+            fields: ["user_id", "idempotency_key"],
+        },
+        ],
     }
 );
 

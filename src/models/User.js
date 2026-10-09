@@ -49,6 +49,14 @@ const User = sequelize.define(
             type: DataTypes.DATE,
             allowNull: false,
         },
+        refresh_token_hash: {
+            type: DataTypes.CHAR(64),
+            allowNull: true,
+        },
+        refresh_token_expires: {
+            type: DataTypes.DATE,
+            allowNull: true,
+        },
     },{
         tableName: "users",
         timestamps:true,

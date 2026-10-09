@@ -1,3 +1,4 @@
+
 import {
     createPayment,
     completePayment,
@@ -14,8 +15,13 @@ import {
 
 import Payment from "../models/Payment.js";
 
+// Forward errors to the centralized error middleware.
+const forwardError = (error, next, statusMap = {}) => {
+    error.statusCode = statusMap[error.message] ?? 500;
+    return next(error);
+};
 
-export const create = async (req, res) => {
+export const create = async (req, res, next) => {
     try {
         const { booking_id, provider } = req.body;
 
@@ -36,40 +42,16 @@ export const create = async (req, res) => {
             ...payment,
         });
     } catch (error) {
-        if (error.message === "Booking not found") {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
-        }
-
-        if (error.message === "Access denied") {
-            return res.status(403).json({
-                message: "Access denied",
-            });
-        }
-
-        if (error.message === "Booking is not available for payment") {
-            return res.status(400).json({
-                message: "Booking is not available for payment",
-            });
-        }
-
-        if (error.message === "Booking has expired") {
-            return res.status(400).json({
-                message: "Booking has expired",
-            });
-        }
-
-        console.error("Error creating payment:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
+        return forwardError(error, next, {
+            "Booking not found": 404,
+            "Access denied": 403,
+            "Booking is not available for payment": 400,
+            "Booking has expired": 400,
         });
     }
 };
 
-
-export const complete = async (req, res) => {
+export const complete = async (req, res, next) => {
     try {
         const {
             transaction_uuid,
@@ -92,64 +74,20 @@ export const complete = async (req, res) => {
             payment,
         });
     } catch (error) {
-        if (error.message === "Payment not found") {
-            return res.status(404).json({
-                message: "Payment not found",
-            });
-        }
-
-        if (error.message === "Payment is not pending") {
-            return res.status(400).json({
-                message: "Payment is not pending",
-            });
-        }
-
-        if (error.message === "Booking not found") {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
-        }
-
-        if (error.message === "Booking is not pending") {
-            return res.status(400).json({
-                message: "Booking is not pending",
-            });
-        }
-
-        if (error.message === "Booking has no items") {
-            return res.status(400).json({
-                message: "Booking has no items",
-            });
-        }
-
-        if (error.message === "Booking has expired") {
-            return res.status(400).json({
-                message: "Booking has expired",
-            });
-        }
-
-        if (error.message === "One or more event seats not found") {
-            return res.status(404).json({
-                message: "One or more event seats not found",
-            });
-        }
-
-        if (error.message === "One or more event seats are not held") {
-            return res.status(409).json({
-                message: "One or more event seats are not held",
-            });
-        }
-
-        console.error("Error completing payment:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
+        return forwardError(error, next, {
+            "Payment not found": 404,
+            "Payment is not pending": 400,
+            "Booking not found": 404,
+            "Booking is not pending": 400,
+            "Booking has no items": 400,
+            "Booking has expired": 400,
+            "One or more event seats not found": 404,
+            "One or more event seats are not held": 409,
         });
     }
 };
 
-
-export const esewaSuccess = async (req, res) => {
+export const esewaSuccess = async (req, res, next) => {
     try {
         const { data } = req.query;
 
@@ -197,11 +135,10 @@ export const esewaSuccess = async (req, res) => {
             });
         }
 
-        const generatedSignature =
-            generateEsewaResponseSignature({
-                signed_field_names,
-                data: esewaResponse,
-            });
+        const generatedSignature = generateEsewaResponseSignature({
+            signed_field_names,
+            data: esewaResponse,
+        });
 
         if (generatedSignature !== signature) {
             return res.status(400).json({
@@ -233,7 +170,7 @@ export const esewaSuccess = async (req, res) => {
             });
         }
 
-        // Safe for repeated callbacks
+        // Make repeated successful callbacks safe.
         if (paymentRecord.status === "success") {
             return res.redirect(
                 `${process.env.FRONTEND_URL}/payment-success?booking_id=${paymentRecord.booking_id}`
@@ -255,11 +192,10 @@ export const esewaSuccess = async (req, res) => {
             });
         }
 
-        const statusResponse =
-            await checkEsewaTransactionStatus({
-                transaction_uuid,
-                total_amount: paymentRecord.amount,
-            });
+        const statusResponse = await checkEsewaTransactionStatus({
+            transaction_uuid,
+            total_amount: paymentRecord.amount,
+        });
 
         if (statusResponse.status !== "COMPLETE") {
             return res.status(400).json({
@@ -268,10 +204,7 @@ export const esewaSuccess = async (req, res) => {
             });
         }
 
-        if (
-            statusResponse.transactionUuid !==
-            transaction_uuid
-        ) {
+        if (statusResponse.transactionUuid !== transaction_uuid) {
             return res.status(400).json({
                 message: "eSewa transaction UUID mismatch",
             });
@@ -303,96 +236,36 @@ export const esewaSuccess = async (req, res) => {
         return res.redirect(
             `${process.env.FRONTEND_URL}/payment-success?booking_id=${payment.booking_id}`
         );
-
     } catch (error) {
-        console.error(
-            "eSewa success callback error:",
-            error
-        );
-
-        if (error.message === "Payment not found") {
-            return res.status(404).json({
-                message: "Payment not found",
-            });
-        }
-
-        if (error.message === "Payment is not pending") {
-            return res.status(400).json({
-                message: "Payment is not pending",
-            });
-        }
-
-        if (error.message === "Booking not found") {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
-        }
-
-        if (error.message === "Booking is not pending") {
-            return res.status(400).json({
-                message: "Booking is not pending",
-            });
-        }
-
-        if (error.message === "Booking has expired") {
-            return res.status(400).json({
-                message: "Booking has expired",
-            });
-        }
-
-        if (error.message === "Booking has no items") {
-            return res.status(400).json({
-                message: "Booking has no items",
-            });
-        }
-
-        if (error.message === "One or more event seats not found") {
-            return res.status(404).json({
-                message: "One or more event seats not found",
-            });
-        }
-
-        if (error.message === "One or more event seats are not held") {
-            return res.status(409).json({
-                message: "One or more event seats are not held",
-            });
-        }
-
-        if (error.message === "Invalid eSewa status response") {
-            return res.status(502).json({
-                message: "Invalid eSewa status response",
-            });
-        }
-
-        if (error.message === "Invalid eSewa status amount") {
-            return res.status(502).json({
-                message: "Invalid eSewa status amount",
-            });
-        }
-
-        return res.status(500).json({
-            message: "Failed to process eSewa payment",
+        return forwardError(error, next, {
+            "Payment not found": 404,
+            "Payment is not pending": 400,
+            "Booking not found": 404,
+            "Booking is not pending": 400,
+            "Booking has expired": 400,
+            "Booking has no items": 400,
+            "One or more event seats not found": 404,
+            "One or more event seats are not held": 409,
+            "Invalid eSewa status response": 502,
+            "Invalid eSewa status amount": 502,
         });
     }
 };
 
-
 export const esewaFailure = (req, res) => {
     console.log("eSewa payment failed callback received:", req.query);
+
     return res.redirect(
         `${process.env.FRONTEND_URL}/payment-failed`
     );
 };
 
-
-export const esewaForm = async (req, res) => {
+export const esewaForm = async (req, res, next) => {
     try {
         const paymentId = Number(req.params.id);
 
         if (!paymentId) {
-            return res.status(400).send(
-                "Invalid payment ID"
-            );
+            return res.status(400).send("Invalid payment ID");
         }
 
         const {
@@ -403,9 +276,7 @@ export const esewaForm = async (req, res) => {
             user_id: req.user.id,
         });
 
-        const formFields = Object.entries(
-            payment_payload
-        )
+        const formFields = Object.entries(payment_payload)
             .map(
                 ([key, value]) =>
                     `<input type="hidden" name="${key}" value="${String(value).replace(/"/g, "&quot;")}">`
@@ -438,48 +309,14 @@ export const esewaForm = async (req, res) => {
 `;
 
         return res.status(200).send(html);
-
     } catch (error) {
-        if (error.message === "Payment not found") {
-            return res.status(404).json({
-                message: "Payment not found",
-            });
-        }
-
-        if (error.message === "Booking not found") {
-            return res.status(404).json({
-                message: "Booking not found",
-            });
-        }
-
-        if (error.message === "Access denied") {
-            return res.status(403).json({
-                message: "Access denied",
-            });
-        }
-
-        if (error.message === "Payment provider is not eSewa") {
-            return res.status(400).json({
-                message: "Payment provider is not eSewa",
-            });
-        }
-
-        if (error.message === "Payment is not pending") {
-            return res.status(400).json({
-                message: "Payment is not pending",
-            });
-        }
-
-        if (error.message === "Booking has expired") {
-            return res.status(400).json({
-                message: "Booking has expired",
-            });
-        }
-
-        console.error("eSewa form error:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
+        return forwardError(error, next, {
+            "Payment not found": 404,
+            "Booking not found": 404,
+            "Access denied": 403,
+            "Payment provider is not eSewa": 400,
+            "Payment is not pending": 400,
+            "Booking has expired": 400,
         });
     }
 };

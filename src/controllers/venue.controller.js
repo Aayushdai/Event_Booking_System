@@ -1,6 +1,6 @@
-import { createVenue, getAllVenues, getVenueById } from "../services/venue.service.js";
+import { createVenue, getAllVenues, getVenueById, updateVenue, deleteVenue } from "../services/venue.service.js";
 
-export const create = async (req, res)=> {
+export const create = async (req, res, next)=> {
     try {
         const { name, location} = req.body;
 
@@ -16,15 +16,13 @@ export const create = async (req, res)=> {
             venue,
         });
     } catch (error) {
-        console.error("Error creating venue:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
         
     };
 
-export const getAll = async(req, res)=> {
+export const getAll = async(req, res, next)=> {
     try{
         const venues = await getAllVenues();
         return res.status(200).json({
@@ -32,15 +30,13 @@ export const getAll = async(req, res)=> {
             venues,
         });
     } catch (error) {
-        console.error("Error retrieving venues:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
         
     };
 
-export const getById = async(req, res)=> {
+export const getById = async(req, res, next)=> {
     try{
         const { id } = req.params;
         if(!id) {
@@ -59,14 +55,12 @@ export const getById = async(req, res)=> {
             venue,
         });
     } catch (error) {
-        console.error("Error retrieving venue:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
 };
 
-export const update = async (req,res)=> {
+export const update = async (req,res, next)=> {
     try{
         const {name, location} = req.body;
         if (!name || !location) {
@@ -81,14 +75,13 @@ export const update = async (req,res)=> {
             venue,
         });
     } catch (error) {
-        console.error("Error updating venue:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode =
+        error.messagge === "Venu not found" ? 404 : 500;
+        return next(error);
     }
-}
+};
 
-export const remove = async (req, res)=> {
+export const remove = async (req, res, next)=> {
     try{
         await deleteVenue(req.params.id);
         return res.status(200).json({
@@ -96,14 +89,9 @@ export const remove = async (req, res)=> {
         });
     }catch (error) {
 
-        if (error.message === "Venue not found") {
-            return res.status(404).json({
-                message: "Venue not found",
-            });
-        }
-        console.error("Error deleting venue:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode =
+        error.message === "Venue not found" ? 404 : 500;
+
+        return next(error);
     }
 }

@@ -1,6 +1,6 @@
 import { createSeat, getSeatById,getSeatsByVenue,updateSeat,deleteSeat } from "../services/seat.service.js";
 
-export const create = async (req, res) => {
+export const create = async (req, res, next) => {
     try {
         const { venue_id, seat_number, seat_type } = req.body;
 
@@ -12,24 +12,16 @@ export const create = async (req, res) => {
         const seat = await createSeat({ venue_id, seat_number, seat_type });
         res.status(201).json(seat);
     } catch (error) {
-        if (error.message === "Venue not found") {
-            return res.status(404).json({
-                message: "Venue not found",
-            });
+        if(error.message === "Venue not found") {
+            error.statusCode = 404;
+        } else if(error.message === "Seat already exists in this venue") {
+            error.statusCode = 409;
+        }else{
+            error.statusCode = 500;
         }
 
-        if (error.message === "Seat already exists in this venue") {
-            return res.status(409).json({
-                message: "Seat already exists in this venue",
-            });
+        return next(error);
         }
-
-        console.error("Error creating seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
-    }
 };
 
 export const getByVenue = async (req, res) => {
@@ -43,14 +35,12 @@ export const getByVenue = async (req, res) => {
         const seats = await getSeatsByVenue(venue_id);
         res.status(200).json(seats);
     } catch (error) {
-        console.error("Error fetching seats by venue:", error);
-        res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return nexrt(error);
     }
 };
 
-export const getById = async (req, res) => {
+export const getById = async (req, res, next) => {
     try {
         const { id } = req.params;
         if (!id) {
@@ -66,14 +56,12 @@ export const getById = async (req, res) => {
         }
         res.status(200).json(seat);
     } catch (error) {
-        console.error("Error fetching seat by ID:", error);
-        res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode = 500;
+        return next(error);
     }
 };
 
-export const update = async (req, res) => {
+export const update = async (req, res, next) => {
     try {
         
         const { seat_number, seat_type } = req.body;
@@ -86,22 +74,14 @@ export const update = async (req, res) => {
         const seat = await updateSeat(req.params.id, { seat_number, seat_type });
         res.status(200).json(seat);
     } catch (error) {
-        if (error.message === "Seat not found") {
-            return res.status(404).json({
-                message: "Seat not found",
-            });
+        if(error.message === "Seat not found") {
+            error.statusCode = 404;
+        }else if(error.message === "Seat already exists in this venue") {
+            error.statusCode = 409;
+        }else{
+            error.statusCode = 500;
         }
-        if (error.message === "Seat already exists in this venue") {
-            return res.status(409).json({
-                message: "Seat already exists in this venue",
-            });
-        }
-
-        console.error("Error updating seat:", error);
-
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        return next(error);
     }
 };
 
@@ -113,14 +93,8 @@ export const remove = async (req, res) => {
             seat,
         });
     } catch (error) {
-        if (error.message === "Seat not found") {
-            return res.status(404).json({   
-                message: "Seat not found",
-            });
-        }
-        console.error("Error deleting seat:", error);
-        return res.status(500).json({
-            message: "Internal server error",
-        });
+        error.statusCode =
+        error.message === "Seat not found" ? 404 : 500;
+        return next(error);
     }
 };
